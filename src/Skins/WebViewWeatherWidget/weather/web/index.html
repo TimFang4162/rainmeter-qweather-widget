@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>天气预报</title>
+    <link rel="stylesheet" href="./qweather-icons/font/qweather-icons.css">
+    <script src="./petite-vue/petite-vue.iife.js"></script>
+
+
+</head>
+
+<script type="module">
+    Date.prototype.Format = function (fmt) {
+        var o = {
+            "M+": this.getMonth() + 1,
+            "d+": this.getDate(),
+            "H+": this.getHours(),
+            "m+": this.getMinutes(),
+            "s+": this.getSeconds(),
+            "q+": Math.floor((this.getMonth() + 3) / 3),
+            "S": this.getMilliseconds()
+        };
+        if (/(y+)/.test(fmt)) fmt = fmt.replace(RegExp.$1, (this.getFullYear() + "").substr(4 - RegExp.$1.length));
+        for (var k in o)
+            if (new RegExp("(" + k + ")").test(fmt)) fmt = fmt.replace(RegExp.$1, (RegExp.$1.length == 1) ? (o[k]) : (("00" + o[k]).substr(("" + o[k]).length)));
+        return fmt;
+    }
+    PetiteVue.createApp({
+        // Config
+        api_key: '2dbce5aa599a42cf9e43cdc7a9fd9fa3',
+        city_str: 'Shangyu',
+        //
+        city_lookup: null,
+        city_name: null,
+        city_id: null,
+        city_coordinate: null,
+        weather_now: null,
+        weather_7d: null,
+        weather_7d_temp_min: 999,
+        weather_7d_temp_max: -999,
+        rain_prec: null,
+        uv_index_text: { 1: "最弱", 2: "弱", 3: "中等", 4: "强", 5: "很强" },
+        week_text: { 0: "周日", 1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六" },
+        parseRainPrec() {
+            const data = this.rain_prec
+            const rainRange = []
+            for (var each in data.minutely) {
+                if (each == 0) {
+                    if (data.minutely[each].precip > 0) {
+                        rainRange.push({ "start": data.minutely[each].fxTime })
+                    }
+                } else {
+                    if (data.minutely[each].precip > 0 && data.minutely[each - 1].precip == 0) {
+                        rainRange.push({ "start": data.minutely[each].fxTime })
+                    }
+                    if (data.minutely[each].precip == 0 && data.minutely[each - 1].precip > 0) {
+                        rainRange[rainRange.length - 1]['end'] = data.minutely[each].fxTime
+                    }
+                }
+            }
+            var summary = ""
+            if (rainRange.length != 0) {
+                if (rainRange[0].start == data.updateTime) {
+                    if (rainRange[0].end) {
+                        summary = `${(new Date(rainRange[0].end) - new Date(data.updateTime)) / 1000 / 60}分钟后雨停`
+                    } else {
+                        summary = "降水将持续超过两小时"
+                    }
+                } else {
+                    summary = `${(new Date(rainRange[0].start) - new Date(data.updateTime)) / 1000 / 60}分钟后有雨`
+                    if (rainRange[0].end) {
+                        summary += `,持续${(new Date(rainRange[0].end) - new Date(rainRange[0].start)) / 1000 / 60}分钟`
+                    } else {
+                        summary += ",持续超过两小时"
+                    }
+                }
+            }
+            if (this.weather_7d.daily[this.weather_7d.daily.length - 2].precip > 0) {
+                if (summary) {
+                    summary += ","
+                }
+                summary += "明日有雨"
+            }
+            return (summary)
+        },
+        async fetchData() {
+            console.log("updating")
+            await fetch(`https://geoapi.qweather.com/v2/city/lookup?key=${this.api_key}&location=${this.city_str}`)
+                .then((res) => res.json())
+                .then((json) => {
+                    this.city_lookup = json
+                    this.city_name = this.city_lookup.location[0].name
+                    this.city_id = this.city_lookup.location[0].id
+                    this.city_coordinate = this.city_lookup.location[0].lon + "," + this.city_lookup.location[0].lat
+                })
+                .catch()
+
+            await fetch(`https://devapi.qweather.com/v7/weather/now?key=${this.api_key}&location=${this.city_id}`)
+                .then((res) => res.json())
+                .then((json) => {
+                    this.weather_now = json
+                })
+                .catch()
+            await fetch(`https://devapi.qweather.com/v7/weather/7d?key=${this.api_key}&location=${this.city_id}`)
+                .then((res) => res.json())
+                .then((json) => {
+                    this.weather_7d = json
+                    this.weather_7d.daily.reverse()
+                    for (var eachDay in this.weather_7d.daily) {
+                        if (this.weather_7d.daily[eachDay].tempMin <= this.weather_7d_temp_min) {
+                            this.weather_7d_temp_min = this.weather_7d.daily[eachDay].tempMin
+                        }
+                        if (this.weather_7d.daily[eachDay].tempMax >= this.weather_7d_temp_max) {
+                            this.weather_7d_temp_max = this.weather_7d.daily[eachDay].tempMax
+                        }
+                    }
+                })
+                .catch()
+            await fetch(`https://devapi.qweather.com/v7/minutely/5m?key=${this.api_key}&location=${this.city_coordinate}`)
+                .then((res) => res.json())
+                .then((json) => {
+                    this.rain_prec = json
+                })
+                .catch()
+        }
+    }).mount()
+    setInterval(() => {document.getElementById("reloadBtn").click()}, 1000*60*5)
+
+</script>
+
+<body>
+    <div v-scope v-effect="fetchData()" class="widget-card">
+
+        <div>
+            <div style="margin-left: 3px;">
+                <span style="margin-bottom: 0px; margin-top: 0px;">{{ city_name }} {{new
+                    Date(weather_now.now.obsTime).Format("HH:mm")}}</span>
+                <button @click="fetchData" id="reloadBtn">刷新</button>
+                <button
+                    @click="window.open(weather_now.fxLink,'','height='+window.screen.availHeight+',width=500')">打开网页</button>
+            </div>
+            <div style="display: flex; flex-direction: column; height: 120px; justify-content: center;">
+                <div style="display: flex; justify-content: flex-start; align-items: flex-end;">
+                    <p class="current-temp">{{ weather_now.now.temp }}°</p>
+                    <p class="current-temp-text">{{ weather_now.now.text }}<br>UV:{{
+                        uv_index_text[weather_7d.daily[weather_7d.daily.length-1].uvIndex] }}</p>
+                    <div class="current-icon"><i :class="'qi-'+weather_now.now.icon"></i></div>
+                </div>
+
+                <p style="margin-top: 0px; margin-bottom: 0px; margin-left: 3px;">{{parseRainPrec(rain_prec)}}</p>
+            </div>
+        </div>
+        <table class="pred-table">
+            <tbody>
+                <template v-for="eachDay in weather_7d.daily">
+                    <tr>
+                        <td>{{ week_text[new Date(eachDay.fxDate).getUTCDay()] }}</td>
+                        <td><i :class="'qi-'+eachDay.iconDay"></i></td>
+                        <td>{{ eachDay.textDay }}</td>
+                        <td style="width: 200px"><span
+                                style="display: flex; width: 200px; height: 7px; background-color: transparent; border-radius: 7px;">
+                                <span
+                                    :style="{display: 'block', 'width': 'calc(150px *'+ (eachDay.tempMin - weather_7d_temp_min) / (weather_7d_temp_max - weather_7d_temp_min)+')', height: '7px', 'background-color': 'transparent', 'border-radius': '7px'}"></span>
+                                <div style="display: flex; align-items: center;">
+                                    <span style="margin-right: 3px; width: 25px; text-align: right; color: #868692;">{{
+                                        eachDay.tempMin }}°</span>
+                                    <span
+                                        :style="{display: 'block', width: 'calc(150px *'+((eachDay.tempMax - eachDay.tempMin)/(weather_7d_temp_max - weather_7d_temp_min))+')', height: '7px', 'background-image': 'linear-gradient(to left, #F18360, #427BFF)', 'border-radius': '7px'}"></span>
+                                    <span style="margin-left: 3px; width: 25px; color: #E3E3E7">{{ eachDay.tempMax
+                                        }}°</span>
+                                </div>
+                            </span>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+</body>
+<style>
+    ::-webkit-scrollbar {
+        display: none;
+    }
+
+    body {
+        margin: 0px;
+        color: #F4F4F4;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+    }
+
+    button {
+        background-color: #fff1;
+        color: #F4F4F4;
+        border: none;
+        height: 25px;
+        border-radius: 5px;
+    }
+
+    .widget-card {
+        width: 320px;
+        height: 320px;
+        background-color: #121232;
+        border-radius: 20px;
+        padding: 15px;
+    }
+
+
+    .current-temp {
+        font-size: 50px;
+        margin-top: 0px;
+        margin-bottom: 0px;
+    }
+
+    .current-temp-text {
+        margin-bottom: 7px;
+        margin-left: 11px;
+    }
+
+    .current-icon {
+        font-size: 50px;
+        margin-bottom: 0px;
+        margin-left: auto;
+    }
+
+    .pred-table {
+        table-layout: auto;
+        width: 100%;
+    }
+</style>
+
+</html>
